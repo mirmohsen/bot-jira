@@ -83,7 +83,9 @@ bot.on('channel_post', async (ctx) => {
 				ctx.reply('Task created in Jira successfully!');
 			})
 			.catch((error) => {
-				console.error(error);
+				// console.error(error);
+
+				// console.log(error.response.data);
 				ctx.reply('Failed to create task in Jira.');
 			});
 	}
