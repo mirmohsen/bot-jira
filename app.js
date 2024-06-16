@@ -8,12 +8,12 @@ async function createJiraIssue(title, description, attachments) {
 	const issueData = {
 		fields: {
 			project: {
-				key: process.env.JIRA_PROJECT_TOKEN,
+				key: 'KAN',
 			},
 			summary: title,
 			description: description,
 			issuetype: {
-				name: 'Bug',
+				name: 'Task',
 			},
 		},
 	};
@@ -23,8 +23,8 @@ async function createJiraIssue(title, description, attachments) {
 		issueData,
 		{
 			auth: {
-				username: process.env.JIRA_EMAIL,
-				password: process.env.JIRA_API_TOKEN,
+				Username: process.env.JIRA_EMAIL,
+				Password: process.env.JIRA_API_TOKEN,
 			},
 			headers: {
 				'Content-Type': 'application/json',
@@ -32,11 +32,13 @@ async function createJiraIssue(title, description, attachments) {
 		}
 	);
 
-	const issueKey = issueResponse.data.key;
+	let issueKey = issueResponse.data.key;
+
+	console.log('issue key ----->', issueKey);
 
 	for (const attachment of attachments) {
 		await axios.post(
-			`${process.env.JIRA_BASE_URL}/rest/api/2/issue/${issueKey}/attachments`,
+			`${process.env.JIRA_BASE_URL}/rest/api/3/issue/${issueKey}/attachments/{id}`,
 			{
 				uri: attachment.url,
 			},
@@ -51,13 +53,12 @@ async function createJiraIssue(title, description, attachments) {
 			}
 		);
 	}
-
 	return issueResponse.data;
 }
 
 bot.on('channel_post', async (ctx) => {
 	console.log('>>>>> Starting bot!');
-
+	console.log(ctx.channelPost.caption);
 	const message = ctx.channelPost;
 	const text = message.caption;
 
@@ -69,23 +70,24 @@ bot.on('channel_post', async (ctx) => {
 		if (message.photo) {
 			const fileId = message.photo[message.photo.length - 1].file_id;
 			const fileUrl = await ctx.telegram.getFileLink(fileId);
-			attachments.push({ url: fileUrl });
+			attachments.push({ url: fileUrl.href });
 		}
 
 		if (message.video) {
 			const fileId = message.video.file_id;
+
 			const fileUrl = await ctx.telegram.getFileLink(fileId);
-			attachments.push({ url: fileUrl });
+			console.log('>>>>>', fileUrl.href);
+			attachments.push({ url: fileUrl.href });
 		}
 
-		await createJiraIssue(title, description, attachments)
+		await createJiraIssue(title, description, attachments[0].url)
 			.then((response) => {
 				ctx.reply('Task created in Jira successfully!');
+				console.log(response);
 			})
 			.catch((error) => {
-				// console.error(error);
-
-				// console.log(error.response.data);
+				console.error(error.response);
 				ctx.reply('Failed to create task in Jira.');
 			});
 	}
