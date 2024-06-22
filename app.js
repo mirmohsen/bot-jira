@@ -16,28 +16,26 @@ bot.on('message', async (ctx) => {
 		const description = message;
 
 		let fileId = null;
+		let tempFilePath = null;
 
 		if (ctx.message.photo) {
-			const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-			await handleFile(ctx, fileId);
+			fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
 		} else if (ctx.message.document) {
-			const fileId = ctx.message.document.file_id;
-			await handleFile(ctx, fileId);
+			fileId =
+				ctx.message.document.file_id[ctx.message.document.length - 1].file_id;
 		} else if (ctx.message.video) {
-			const fileId = ctx.message.video.file_id;
-			await handleFile(ctx, fileId);
+			fileId = ctx.message.video.file_id[ctx.message.video.length - 1].file_id;
 		}
 
-		const filePath = fileId ? await handleFile(ctx, fileId) : null;
+		if (fileId) {
+			tempFilePath = await handleFile(ctx, fileId);
+		}
 
 		const issueKey = await createJiraIssue(ctx, title, description);
 
-		if (issueKey) {
-			await attachFilesToJiraIssue(issueKey, filePath);
-
-			if (filePath) {
-				clearDirectory(path.dirname(filePath));
-			}
+		if (issueKey && tempFilePath) {
+			await attachFilesToJiraIssue(issueKey, tempFilePath);
+			clearFile(tempFilePath);
 		}
 	}
 });
@@ -57,17 +55,17 @@ async function handleFile(ctx, fileId) {
 
 	if (fileSizeBytes > 1.5e7) {
 		ctx.reply('The file is larger than 15 MB. Please reduce the file size.');
-		return;
+		return null;
 	}
 
 	const fileName = path.basename(filePath);
-	const public = path.resolve(__dirname, 'public', fileName);
+	const tempFilePath = path.resolve(__dirname, 'temp', fileName);
 
-	fs.mkdirSync(path.dirname(public), { recursive: true });
+	fs.mkdirSync(path.dirname(tempFilePath), { recursive: true });
 
-	fs.writeFileSync(public, fileResponse.data);
+	fs.writeFileSync(tempFilePath, fileResponse.data);
 
-	return public;
+	return tempFilePath;
 }
 
 async function createJiraIssue(ctx, title, description) {
@@ -109,75 +107,54 @@ async function createJiraIssue(ctx, title, description) {
 		data: data,
 	};
 
-	axios
-		.request(config)
-		.then((response) => {
-			ctx.reply(
-				`Task created in Jira successfully!\nissue key = ${response.data.key}, issue id = ${response.data.id}`
-			);
-		})
-		.catch((error) => {
-			console.error(error);
-			ctx.reply('Failed to create task in Jira.');
-		});
+	try {
+		const response = await axios.request(config);
+		ctx.reply(
+			`Task created in Jira successfully!\nissue key = ${response.data.key}, issue id = ${response.data.id}`
+		);
+		return response.data.key;
+	} catch (error) {
+		console.error('Failed to create task in Jira:', error);
+		ctx.reply('Failed to create task in Jira.');
+		return null;
+	}
 }
 
-async function attachFilesToJiraIssue(issueKey, filePath) {
-	if (!filePath) {
+async function attachFilesToJiraIssue(issueKey, tempFilePath) {
+	if (!tempFilePath) {
+		console.log('No file path provided.');
 		return;
 	}
 
 	try {
-		const directoryPath = path.dirname(filePath);
+		const formData = new FormData();
+		formData.append('file', fs.createReadStream(tempFilePath));
 
-		fs.readdir(directoryPath, async (err, files) => {
-			if (err) {
-				console.error('Error reading directory:', err);
-				return;
-			}
+		const config = {
+			method: 'post',
+			maxBodyLength: Infinity,
+			url: `${process.env.JIRA_URL}/rest/api/3/issue/${issueKey}/attachments`,
+			headers: {
+				'X-Atlassian-Token': 'no-check',
+				Authorization: process.env.JIRA_API_TOKEN,
+				...formData.getHeaders(),
+			},
+			data: formData,
+		};
 
-			for (const file of files) {
-				const fullPath = path.join(directoryPath, file);
-				const data = new FormData();
-				data.append('file', fs.createReadStream(fullPath));
-
-				let config = {
-					method: 'post',
-					maxBodyLength: 'Infinity',
-					url: `${process.env.JIRA_URL}/rest/api/3/issue/${issueKey}/attachments`,
-					headers: {
-						'X-Atlassian-Token': 'no-check',
-						Authorization: process.env.JIRA_API_TOKEN,
-						...data.getHeaders(),
-					},
-					data: data,
-				};
-
-				await axios
-					.request(config)
-					.then((response) => {
-						console.log(JSON.stringify(response.data));
-					})
-					.catch((error) => {
-						console.log(error);
-					});
-
-				console.log(`File attached: ${file}`);
-			}
-		});
+		const response = await axios.request(config);
+		console.log(`File attached successfully: ${tempFilePath}`);
 	} catch (error) {
-		console.error('Error attaching files to Jira issue:', error);
+		console.error('Error attaching file to Jira issue:', error);
 	}
 }
 
-function clearDirectory(directory) {
-	fs.readdir(directory, (err, files) => {
-		if (err) throw err;
-
-		for (const file of files) {
-			fs.unlink(path.join(directory, file), (err) => {
-				if (err) throw err;
-			});
+function clearFile(filePath) {
+	fs.unlink(filePath, (err) => {
+		if (err) {
+			console.error(`Error clearing file ${filePath}:`, err);
+		} else {
+			console.log(`Cleared temporary file: ${filePath}`);
 		}
 	});
 }
