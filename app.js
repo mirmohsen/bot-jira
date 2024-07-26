@@ -69,10 +69,21 @@ async function handleFile(ctx, fileId) {
 }
 
 async function createJiraIssue(ctx, title, description) {
+	const topicName = ctx.message.reply_to_message.forum_topic_created.name;
+	let key;
+	if (topicName === 'App bug') {
+		key = 'KAN';
+	}
+	if (topicName === 'desktop bug') {
+		key = 'TT';
+	}
+	if (topicName === 'backend bug') {
+		key = 'KAN';
+	}
 	let data = JSON.stringify({
 		fields: {
 			project: {
-				key: 'KAN',
+				key: key,
 			},
 			summary: title,
 			issuetype: {
