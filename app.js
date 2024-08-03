@@ -15,27 +15,62 @@ bot.on('message', async (ctx) => {
 		const title = message.split('\n')[0];
 		const description = message;
 
-		let fileId = null;
-		let tempFilePath = null;
+		let tempFilePaths = [];
 
-		if (ctx.message.photo) {
-			fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-		} else if (ctx.message.document) {
-			fileId =
-				ctx.message.document.file_id[ctx.message.document.length - 1].file_id;
-		} else if (ctx.message.video) {
-			fileId = ctx.message.video.file_id[ctx.message.video.length - 1].file_id;
-		}
+		if (ctx.message.media_group_id) {
+			const messages = await ctx.telegram
+				.getUpdates({ offset: -100 })
+				.then((res) =>
+					res.filter(
+						(update) =>
+							update.message &&
+							update.message.media_group_id === ctx.message.media_group_id
+					)
+				);
 
-		if (fileId) {
-			tempFilePath = await handleFile(ctx, fileId);
+			for (const message of messages) {
+				let fileId = null;
+
+				if (message.message.photo) {
+					fileId =
+						message.message.photo[message.message.photo.length - 1].file_id;
+				} else if (message.message.document) {
+					fileId = message.message.document.file_id;
+				} else if (message.message.video) {
+					fileId = message.message.video.file_id;
+				}
+
+				if (fileId) {
+					const tempFilePath = await handleFile(ctx, fileId);
+					if (tempFilePath) {
+						tempFilePaths.push(tempFilePath);
+					}
+				}
+			}
+		} else {
+			let fileId = null;
+
+			if (ctx.message.photo) {
+				fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+			} else if (ctx.message.document) {
+				fileId = ctx.message.document.file_id;
+			} else if (ctx.message.video) {
+				fileId = ctx.message.video.file_id;
+			}
+
+			if (fileId) {
+				const tempFilePath = await handleFile(ctx, fileId);
+				if (tempFilePath) {
+					tempFilePaths.push(tempFilePath);
+				}
+			}
 		}
 
 		const issueKey = await createJiraIssue(ctx, title, description);
 
-		if (issueKey && tempFilePath) {
-			await attachFilesToJiraIssue(issueKey, tempFilePath);
-			clearFile(tempFilePath);
+		if (issueKey && tempFilePaths.length > 0) {
+			await attachFilesToJiraIssue(issueKey, tempFilePaths);
+			clearFiles(tempFilePaths);
 		}
 	}
 });
@@ -131,42 +166,46 @@ async function createJiraIssue(ctx, title, description) {
 	}
 }
 
-async function attachFilesToJiraIssue(issueKey, tempFilePath) {
-	if (!tempFilePath) {
-		console.log('No file path provided.');
+async function attachFilesToJiraIssue(issueKey, tempFilePaths) {
+	if (!tempFilePaths || tempFilePaths.length === 0) {
+		console.log('No file paths provided.');
 		return;
 	}
 
-	try {
-		const formData = new FormData();
-		formData.append('file', fs.createReadStream(tempFilePath));
+	for (const tempFilePath of tempFilePaths) {
+		try {
+			const formData = new FormData();
+			formData.append('file', fs.createReadStream(tempFilePath));
 
-		const config = {
-			method: 'post',
-			maxBodyLength: Infinity,
-			url: `${process.env.JIRA_URL}/rest/api/3/issue/${issueKey}/attachments`,
-			headers: {
-				'X-Atlassian-Token': 'no-check',
-				Authorization: process.env.JIRA_API_TOKEN,
-				...formData.getHeaders(),
-			},
-			data: formData,
-		};
+			const config = {
+				method: 'post',
+				maxBodyLength: Infinity,
+				url: `${process.env.JIRA_URL}/rest/api/3/issue/${issueKey}/attachments`,
+				headers: {
+					'X-Atlassian-Token': 'no-check',
+					Authorization: process.env.JIRA_API_TOKEN,
+					...formData.getHeaders(),
+				},
+				data: formData,
+			};
 
-		const response = await axios.request(config);
-		console.log(`File attached successfully: ${tempFilePath}`);
-	} catch (error) {
-		console.error('Error attaching file to Jira issue:', error);
+			const response = await axios.request(config);
+			console.log(`File attached successfully: ${tempFilePath}`);
+		} catch (error) {
+			console.error('Error attaching file to Jira issue:', error);
+		}
 	}
 }
 
-function clearFile(filePath) {
-	fs.unlink(filePath, (err) => {
-		if (err) {
-			console.error(`Error clearing file ${filePath}:`, err);
-		} else {
-			console.log(`Cleared temporary file: ${filePath}`);
-		}
+function clearFiles(filePaths) {
+	filePaths.forEach((filePath) => {
+		fs.unlink(filePath, (err) => {
+			if (err) {
+				console.error(`Error clearing file ${filePath}:`, err);
+			} else {
+				console.log(`Cleared temporary file: ${filePath}`);
+			}
+		});
 	});
 }
 
